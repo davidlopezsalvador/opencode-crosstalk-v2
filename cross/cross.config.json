@@ -1,0 +1,10 @@
+{
+    "my_session_id": "",
+    "my_model": "",
+    "my_role": "leader",
+    "whiteboard_dir": "./whiteboard",
+    "log_path": "%USERPROFILE%\\.local\\share\\opencode\\log\\opencode.log",
+    "desktop_logs_dir": "%APPDATA%\\ai.opencode.desktop\\logs",
+    "port": 4096,
+    "protocol_version": "v2"
+}

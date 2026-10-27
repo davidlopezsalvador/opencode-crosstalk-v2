@@ -1,0 +1,5 @@
+﻿cross/cross.config.local.json
+whiteboard/
+diario/
+*.log
+cross-port.cache
