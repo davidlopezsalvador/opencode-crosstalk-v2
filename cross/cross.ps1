@@ -51,7 +51,7 @@ function Invoke-CrossApi {
     }
     $args += $url
     $code = & curl.exe @args 2>$null
-    $body = if (Test-Path $tmpOut) { Get-Content $tmpOut -Raw } else { '' }
+    $body = if (Test-Path $tmpOut) { [string](Get-Content $tmpOut -Raw) } else { '' }
     Remove-Item $tmpOut -ErrorAction SilentlyContinue
     if ($tmpBody) { Remove-Item $tmpBody -ErrorAction SilentlyContinue }
     return @{ status = [int]$code; body = $body }
@@ -73,8 +73,13 @@ while ($i -lt $ArgsList.Count) {
         }
     } else { $i++ }
 }
-$PortArg = if ($flags['port']) { [int]$flags['port'] } else { 4096 }
+$PortArg = if ($flags['port']) { [int]$flags['port'] } else { 0 }
 $PasswordArg = if ($flags['password']) { [string]$flags['password'] } else { '' }
+# default port from config if not specified
+if ($PortArg -eq 0) {
+    try { $cfg = Get-CrossConfig; if ($cfg.port) { $PortArg = [int]$cfg.port } } catch {}
+    if ($PortArg -eq 0) { $PortArg = 4096 }
+}
 
 switch ($Command.ToLower()) {
     'help' {
@@ -85,7 +90,8 @@ switch ($Command.ToLower()) {
         Write-Host "  whoami              Show current session info"
         Write-Host "  sessions            List all sessions"
         Write-Host "  read --session ID   Read messages from a session"
-        Write-Host "  send --dest ID --text '...'   Send a message (synchronous)"
+        Write-Host "  send --dest ID --text '...'   Send a message (admits+schedules)"
+        Write-Host "  wait --session ID   Block until agent loop is idle"
         Write-Host "  config --list       Show configuration"
         Write-Host ""
         Write-Host "Global flags: --port N, --password P"
@@ -149,6 +155,14 @@ switch ($Command.ToLower()) {
         $body = @{ text = $text } | ConvertTo-Json -Compress
         $api = Invoke-CrossApi -Method 'POST' -Path "/session/$dest/prompt" -BodyJson $body -Port $PortArg -Password $pw -TimeoutSec 120
         $obj = @{ ts = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ'); cmd = 'send'; ok = ($api.status -ge 200 -and $api.status -lt 300); code = 0; dest = $dest; http_status = $api.status; response = $api.body }
+        Write-Json $obj
+    }
+    'wait' {
+        $sid = [string]$flags['session']
+        if (-not $sid) { Write-Host "ERROR: --session required"; exit 1 }
+        $pw = if ($PasswordArg) { $PasswordArg } else { Get-CrossPassword }
+        $api = Invoke-CrossApi -Method 'POST' -Path "/experimental/session/$sid/wait" -Port $PortArg -Password $pw -TimeoutSec 300
+        $obj = @{ ts = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ'); cmd = 'wait'; ok = ($api.status -ge 200 -and $api.status -lt 300); code = 0; session = $sid; http_status = $api.status }
         Write-Json $obj
     }
     'config' {

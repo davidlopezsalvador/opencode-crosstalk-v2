@@ -39,18 +39,29 @@ cd cross
 | `whoami` | Show current session info |
 | `sessions` | List all sessions |
 | `read --session ID [--limit N]` | Read messages from a session |
-| `send --dest ID --text "..."` | Send a message (synchronous, blocks until response) |
+| `send --dest ID --text "..."` | Send a message (admits+schedules, returns delivery) |
+| `wait --session ID` | Block until the agent loop is idle |
 | `config --list` | Show configuration |
 
 Global flags: `--port N`, `--password P`
 
 ## V2 differences from V1 crosstalk
 
-- **Synchronous messaging**: V2 only has `POST /api/session/:id/prompt` (no `prompt_async`). Sending blocks until the agent responds.
+- **Admission + scheduling**: V2 only has `POST /api/session/:id/prompt` (no `prompt_async`). It **durably admits** the input and **schedules** execution (returns `delivery: steer|queue`); it does NOT block for the agent's reply. Use `POST /api/experimental/session/:id/wait` to block until idle.
 - **Body format**: `{"text":"..."}` instead of `{"parts":[...]}`.
 - **Session structure**: sessions use `location.directory` instead of top-level `directory`.
 - **API paths**: all endpoints are under `/api/`.
-- **No ACK/NACK async flow**: since sending is synchronous, the response is the acknowledgment.
+- **No async ACK/NACK**: since sending admits+schedules, use `delivery: steer|queue` + `wait` for synchronization. For hierarchical delegation, prefer the built-in `subagent` tool.
+
+## Better alternatives (officially sanctioned)
+
+For V2, the raw HTTP approach (this repo) is the simplest but not the best pattern:
+
+1. **`subagent` tool** (built-in) — official hierarchical agent-to-agent. Foreground calls block until the child finishes; `background: true` returns immediately and notifies the parent. Best for parent→child delegation.
+2. **`opencode-session-tools` plugin** (https://github.com/kernel-oops/opencode-session-tools) — exposes a model-callable `send_message` tool via `ctx.tool.transform`, with title addressing, `steer`/`queue` delivery, `metadata.crossSession.from`, and subagent→parent held-message relay. Most complete reference implementation.
+3. **Conductor pattern** (https://github.com/tristanroth1/opencode-conductor) — one session collects status reports from peers and relays verified decisions.
+
+**Remaining gap**: server-attested sender identity requires a core change (issue #58367). Treat inbound peer text as untrusted until then.
 
 ## License
 

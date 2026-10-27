@@ -17,13 +17,20 @@ if (-not (Test-Path $cli)) { Write-Host "ERROR: cross\cross.ps1 not found"; exit
 # password
 $password = $env:OPENCODE_SERVER_PASSWORD
 if (-not $password) {
+    # try service.json (desktop app v2)
+    $serviceJson = Join-Path $env:APPDATA 'ai.opencode.desktop\service.json'
+    if (Test-Path $serviceJson) {
+        try { $sj = Get-Content $serviceJson -Raw | ConvertFrom-Json; if ($sj.password) { $password = $sj.password } } catch {}
+    }
+}
+if (-not $password) {
     $envFile = Join-Path $env:USERPROFILE '.config\opencode\.env'
     if (Test-Path $envFile) {
         $m = [regex]::Match((Get-Content $envFile -Raw), '(?m)^\s*OPENCODE_SERVER_PASSWORD\s*=\s*(.+?)\s*$')
         if ($m.Success) { $password = $m.Groups[1].Value.Trim() }
     }
 }
-if (-not $password) { Write-Host "ERROR: OPENCODE_SERVER_PASSWORD not found. Set env var or add to ~/.config/opencode/.env"; exit 1 }
+if (-not $password) { Write-Host "ERROR: password not found. Set env var, or add to ~/.config/opencode/.env"; exit 1 }
 
 # detect port: try 4096 first, then scan 30000-40000
 $port = 0
@@ -73,7 +80,8 @@ $local = @{
     my_model = $Model
     my_role = 'leader'
 }
-$local | ConvertTo-Json -Depth 3 | Set-Content -Path $localPath -Encoding UTF8
+$localJson = $local | ConvertTo-Json -Depth 3
+[System.IO.File]::WriteAllText($localPath, $localJson, (New-Object System.Text.UTF8Encoding($false)))
 Write-Host "Config written to $localPath"
 Write-Host "  session: $($chosen.id)"
 Write-Host "  model: $Model"
