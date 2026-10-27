@@ -39,7 +39,7 @@ cd cross
 | `whoami` | Show current session info |
 | `sessions` | List all sessions |
 | `read --session ID [--limit N]` | Read messages from a session |
-| `send --dest ID --text "..."` | Send a message (admits+schedules, returns delivery) |
+| `send --dest ID --text "..." [--delivery steer|queue] [--no-resume] [--wait]` | Send a message (admits+schedules; --wait blocks until idle) |
 | `wait --session ID` | Block until the agent loop is idle |
 | `config --list` | Show configuration |
 

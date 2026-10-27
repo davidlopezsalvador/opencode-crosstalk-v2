@@ -54,7 +54,9 @@ function Invoke-CrossApi {
     $body = if (Test-Path $tmpOut) { [string](Get-Content $tmpOut -Raw) } else { '' }
     Remove-Item $tmpOut -ErrorAction SilentlyContinue
     if ($tmpBody) { Remove-Item $tmpBody -ErrorAction SilentlyContinue }
-    return @{ status = [int]$code; body = $body }
+    $statusCode = 0
+    if ($code -match '^\d+$') { $statusCode = [int]$code } 
+    return @{ status = $statusCode; body = $body }
 }
 
 function Write-Json($obj) { $obj | ConvertTo-Json -Depth 6 -Compress }
@@ -107,6 +109,10 @@ switch ($Command.ToLower()) {
         $cfg = Get-CrossConfig
         $pw = if ($PasswordArg) { $PasswordArg } else { Get-CrossPassword }
         $api = Invoke-CrossApi -Method 'GET' -Path "/session/$($cfg.my_session_id)" -Port $PortArg -Password $pw
+        if ($api.status -ge 400 -or $api.status -eq 0) {
+            $obj = @{ ts = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ'); cmd = 'whoami'; ok = $false; code = 3; error = "HTTP $($api.status)"; detail = $api.body }
+            Write-Json $obj; return
+        }
         $s = $api.body | ConvertFrom-Json
         $data = if ($s.data) { $s.data } else { $s }
         $obj = @{ ts = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ'); cmd = 'whoami'; ok = ($api.status -eq 200); code = 0; session_id = $cfg.my_session_id; title = $data.title; model = $data.model.id; directory = $data.location.directory }
@@ -115,13 +121,17 @@ switch ($Command.ToLower()) {
     'sessions' {
         $pw = if ($PasswordArg) { $PasswordArg } else { Get-CrossPassword }
         $api = Invoke-CrossApi -Method 'GET' -Path '/session' -Port $PortArg -Password $pw
+        if ($api.status -ge 400 -or $api.status -eq 0) {
+            $obj = @{ ts = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ'); cmd = 'sessions'; ok = $false; code = 3; error = "HTTP $($api.status)"; detail = $api.body }
+            Write-Json $obj; return
+        }
         $parsed = $api.body | ConvertFrom-Json
         $all = if ($parsed.data) { $parsed.data } elseif ($parsed -is [array]) { $parsed } else { @($parsed) }
         $dirFilter = if ($flags['directory']) { [string]$flags['directory'] } else { '' }
         $list = @()
         foreach ($s in $all) {
             $dir = if ($s.location -and $s.location.directory) { $s.location.directory } else { $s.directory }
-            if ($dirFilter -and $dir -and -not ($dir -eq $dirFilter)) { continue }
+            if ($dirFilter -and $dir -and -not ($dir.ToLower() -eq $dirFilter.ToLower())) { continue }
             $list += @{ id = $s.id; title = $s.title; model = if ($s.model.id) { $s.model.id } else { '' }; directory = $dir }
         }
         $obj = @{ ts = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ'); cmd = 'sessions'; ok = ($api.status -eq 200); code = 0; count = $list.Count; sessions = $list }
@@ -133,6 +143,10 @@ switch ($Command.ToLower()) {
         $pw = if ($PasswordArg) { $PasswordArg } else { Get-CrossPassword }
         $limit = if ($flags['limit']) { [int]$flags['limit'] } else { 20 }
         $api = Invoke-CrossApi -Method 'GET' -Path "/session/$sid/message?limit=$limit" -Port $PortArg -Password $pw
+        if ($api.status -ge 400 -or $api.status -eq 0) {
+            $obj = @{ ts = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ'); cmd = 'read'; ok = $false; code = 3; error = "HTTP $($api.status)"; detail = $api.body }
+            Write-Json $obj; return
+        }
         $parsed = $api.body | ConvertFrom-Json
         $msgs = if ($parsed.data) { $parsed.data } elseif ($parsed -is [array]) { $parsed } else { @($parsed) }
         $out = @()
@@ -141,6 +155,8 @@ switch ($Command.ToLower()) {
             $text = ''
             if ($role -eq 'user') { $text = $m.text }
             elseif ($role -eq 'assistant') { $text = ($m.content | Where-Object { $_.type -eq 'text' } | ForEach-Object { $_.text }) -join "`n" }
+            elseif ($m.text) { $text = $m.text }
+            elseif ($m.content) { $text = ($m.content | Where-Object { $_.type -eq 'text' } | ForEach-Object { $_.text }) -join "`n" }
             $out += @{ id = $m.id; role = $role; text = $text; created = $m.time.created }
         }
         $obj = @{ ts = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ'); cmd = 'read'; ok = ($api.status -eq 200); code = 0; count = $out.Count; messages = $out }
@@ -152,10 +168,18 @@ switch ($Command.ToLower()) {
         if (-not $dest -or -not $text) { Write-Host "ERROR: --dest and --text required"; exit 1 }
         $pw = if ($PasswordArg) { $PasswordArg } else { Get-CrossPassword }
         $cfg = Get-CrossConfig
-        $body = @{ text = $text } | ConvertTo-Json -Compress
+        $bodyObj = @{ text = $text }
+        if ($flags['delivery']) { $bodyObj.delivery = [string]$flags['delivery'] }
+        if ($flags['no-resume']) { $bodyObj.resume = $false }
+        $body = $bodyObj | ConvertTo-Json -Compress
         $api = Invoke-CrossApi -Method 'POST' -Path "/session/$dest/prompt" -BodyJson $body -Port $PortArg -Password $pw -TimeoutSec 120
-        $obj = @{ ts = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ'); cmd = 'send'; ok = ($api.status -ge 200 -and $api.status -lt 300); code = 0; dest = $dest; http_status = $api.status; response = $api.body }
+        $ok = ($api.status -ge 200 -and $api.status -lt 300)
+        $obj = @{ ts = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ'); cmd = 'send'; ok = $ok; code = 0; dest = $dest; http_status = $api.status; response = $api.body }
         Write-Json $obj
+        if ($ok -and $flags['wait']) {
+            $waitApi = Invoke-CrossApi -Method 'POST' -Path "/experimental/session/$dest/wait" -Port $PortArg -Password $pw -TimeoutSec 300
+            Write-Host ("wait: HTTP " + $waitApi.status)
+        }
     }
     'wait' {
         $sid = [string]$flags['session']
